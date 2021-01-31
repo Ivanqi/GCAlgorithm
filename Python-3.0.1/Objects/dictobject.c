@@ -944,7 +944,7 @@ dict_dealloc(register PyDictObject *mp)
 {
 	register PyDictEntry *ep;
 	Py_ssize_t fill = mp->ma_fill;
- 	PyObject_GC_UnTrack(mp);
+ 	PyObject_GC_UnTrack(mp);	// 追踪结束
 	Py_TRASHCAN_SAFE_BEGIN(mp)
 	for (ep = mp->ma_table; fill > 0; ep++) {
 		if (ep->me_key) {
