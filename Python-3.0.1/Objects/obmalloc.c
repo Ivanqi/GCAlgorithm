@@ -1059,10 +1059,15 @@ PyObject_Free(void *p)
 	poolp next, prev;
 	uint size;
 
+	// 为NULL时不执行任何操作
 	if (p == NULL)	/* free(NULL) has no effect */
 		return;
 
 	pool = POOL_ADDR(p);
+	/**
+	 * Py_ADDRESS_IN_RANGE()负责检查用宏POOL_ADDR()获得的pool是否正确
+	 * 通过检查，就从pool取出freeblock，设其作为释放对象的block
+	 */
 	if (Py_ADDRESS_IN_RANGE(p, pool)) {
 		/* We allocated this address. */
 		LOCK();
@@ -1074,7 +1079,9 @@ PyObject_Free(void *p)
 		 * 把作为释放对象的block连接到freeblock
 		 */
 		assert(pool->ref.count > 0);	/* else it was empty */
+		// 从pool中取出freeblock
 		*(block **)p = lastfree = pool->freeblock;
+		// 将释放的block连接到freeblock的开头
 		pool->freeblock = (block *)p;
 		// 这个pool中最后free的block是否为NULL
 		if (lastfree) {
@@ -1094,6 +1101,9 @@ PyObject_Free(void *p)
 			 * link to the front of freepools.  This ensures that
 			 * previously freed pools will be allocated later
 			 * (being not referenced, they are perhaps paged out).
+			 * 
+			 * prev <-> pool <-> next
+			 * prev <--> next
 			 */
 			next = pool->nextpool;
 			prev = pool->prevpool;
@@ -1102,6 +1112,8 @@ PyObject_Free(void *p)
 
 			/* Link the pool to freepools.  This is a singly-linked
 			 * list, and pool->prevpool isn't used there.
+			 * 
+			 * 将pool返回arena
 			 */
 			ao = &arenas[pool->arenaindex];
 			pool->nextpool = ao->freepools;
@@ -1134,6 +1146,7 @@ PyObject_Free(void *p)
 
 				/* Fix the pointer in the prevarena, or the
 				 * usable_arenas pointer.
+				 * 从usable_arenas取出arena_object
 				 */
 				if (ao->prevarena == NULL) {
 					usable_arenas = ao->nextarena;
@@ -1153,12 +1166,16 @@ PyObject_Free(void *p)
 				}
 				/* Record that this arena_object slot is
 				 * available to be reused.
+				 * 
+				 * 为了再利用arena_object
+				 * 连接到unused_arena_objects
 				 */
 				ao->nextarena = unused_arena_objects;
 				unused_arena_objects = ao;
 
 				/* Free the entire arena. 释放arena */
 				free((void *)ao->address);
+				// "arena尚未被分配"的标记
 				ao->address = 0;	/* mark unassociated */
 				--narenas_currently_allocated;
 
@@ -1189,6 +1206,9 @@ PyObject_Free(void *p)
 			 * the nearly empty arenas to be completely freed.  In
 			 * a few un-scientific tests, it seems like this
 			 * approach allowed a lot more memory to be freed.
+			 * 
+			 * 将刚返回pool的arena_object的空pool数和下一个arena_object的空pool数进行比较
+			 * 如果之前的arena_object比下一个arena_object小，那么就不执行任何操作，直接return
 			 */
 			if (ao->nextarena == NULL ||
 				     nf <= ao->nextarena->nfreepools) {
@@ -1196,10 +1216,17 @@ PyObject_Free(void *p)
 				UNLOCK();
 				return;
 			}
+
+			/**
+			 * 如果并非如此，则必须对usable_arenas进行排序，按arena内空pool的数量从小到大的顺序进行排列
+			 */
+
 			/* Case 3:  We have to move the arena towards the end
 			 * of the list, because it has more free pools than
 			 * the arena to its right.
 			 * First unlink ao from usable_arenas.
+			 * 
+			 * 从usable_arenas取出对象arena_object
 			 */
 			if (ao->prevarena != NULL) {
 				/* ao isn't at the head of the list */
@@ -1215,6 +1242,8 @@ PyObject_Free(void *p)
 
 			/* Locate the new insertion point by iterating over
 			 * the list, using our nextarena pointer.
+			 * 
+			 * 从usable_arenas取出对象arena_object
 			 */
 			while (ao->nextarena != NULL &&
 					nf > ao->nextarena->nfreepools) {
@@ -1256,7 +1285,7 @@ PyObject_Free(void *p)
 		size = pool->szidx;
 		next = usedpools[size + size];
 		prev = next->prevpool;
-		/* insert pool before next:   prev <-> pool <-> next */
+		/* insert pool before next(在usedpools的开头插入):   prev <-> pool <-> next */
 		pool->nextpool = next;
 		pool->prevpool = prev;
 		next->prevpool = pool;
