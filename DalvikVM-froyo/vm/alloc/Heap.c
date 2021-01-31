@@ -893,6 +893,7 @@ void dvmCollectGarbageInternal(bool collectSoftReferences, enum GcReason reason)
     /* Mark the set of objects that are strongly reachable from the roots.
      */
     LOGD_HEAP("Marking...");
+    // 初始标记
     dvmHeapMarkRootSet();
 
     /* dvmHeapScanMarkedObjects() will build the lists of known
@@ -919,6 +920,7 @@ void dvmCollectGarbageInternal(bool collectSoftReferences, enum GcReason reason)
      * objects will also be marked.
      */
     LOGD_HEAP("Recursing...");
+    // 搜索被初始标记的对象
     dvmHeapScanMarkedObjects();
 #if DVM_TRACK_HEAP_MARKING
     strongMarkCount = gcHeap->markCount;
@@ -977,7 +979,7 @@ void dvmCollectGarbageInternal(bool collectSoftReferences, enum GcReason reason)
 #endif
 
 //TODO: take care of JNI weak global references
-
+// 调用与清除相关的函数群: 清除阶段
 #if DVM_TRACK_HEAP_MARKING
     LOGI_HEAP("Marked objects: %dB strong, %dB final, %dB phantom\n",
             strongMarkSize, finalizeMarkSize, phantomMarkSize);

@@ -205,8 +205,11 @@ HB_INLINE_PROTO(
             bool setBit, bool returnOld)
 )
 {
+    // 负责计算由VM Heap的开头到指针位置的偏移
     const uintptr_t offset = (uintptr_t)obj - hb->base;
+    // 计算位图的索引，对offset调用宏HB_OFFSET_TO_INDEX()负责这部分操作
     const size_t index = HB_OFFSET_TO_INDEX(offset);
+    // 生成位掩码以用于标记
     const unsigned long int mask = HB_OFFSET_TO_MASK(offset);
 
 #ifndef NDEBUG
@@ -214,14 +217,27 @@ HB_INLINE_PROTO(
     assert((uintptr_t)obj >= hb->base);
     assert(index < hb->bitsLen / sizeof(*hb->bits));
 #endif
-
+    /**
+     * setBit为true
+     *  标记位图
+     * setBit为false
+     *  从位图消去标记
+     */
     if (setBit) {
         if ((uintptr_t)obj > hb->max) {
             hb->max = (uintptr_t)obj;
         }
+        /**
+         * returnOld为false
+         *  那么只进行标记
+         * returnOld为true
+         *  则返回标记以前的值。标记前的值有两种情况：已经标记了，或者尚未标记
+         */
         if (returnOld) {
             unsigned long int *p = hb->bits + index;
+            // 把位图的元素数据复制到变量word
             const unsigned long int word = *p;
+            // 实际标记
             *p |= mask;
             return word & mask;
         } else {
@@ -301,6 +317,10 @@ HB_INLINE_PROTO(
  *
  * NOTE: casting this value to a bool is dangerous, because higher
  * set bits will be lost.
+ * 
+ * 该函数将确认是否已经设置了对应指针的对象位图的标志位
+ * 因为分配对象时对象肯定会被标记到对象位图，所以在这里如果没有标志位的话，作为检查对象的地址肯定会指向实际没有得到分配的对象
+ * 函数就会判断这样的地址为"非指针"
  */
 HB_INLINE_PROTO(
     unsigned long int

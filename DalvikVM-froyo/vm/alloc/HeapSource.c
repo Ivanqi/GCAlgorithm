@@ -222,6 +222,7 @@ oldHeapOverhead(const HeapSource *hs, bool includeActive)
 /*
  * Returns the heap that <ptr> could have come from, or NULL
  * if it could not have come from any heap.
+ * 这里把VM Heap Source 里的VM Heap排序，检查对象的指针是否在VM Heap范围内
  */
 static inline Heap *
 ptr2heap(const HeapSource *hs, const void *ptr)
@@ -946,6 +947,7 @@ dvmHeapSourceFreeList(size_t numPtrs, void **ptrs)
 
 /*
  * Returns true iff <ptr> was allocated from the heap source.
+ * 负责检查指针是否在位图范围内
  */
 bool
 dvmHeapSourceContains(const void *ptr)
@@ -953,8 +955,12 @@ dvmHeapSourceContains(const void *ptr)
     Heap *heap;
 
     HS_BOILERPLATE();
-
+    // 用于从对象指针的地址获取实际分配到对象的VM Heap的地址
     heap = ptr2heap(gHs, ptr);
+    /**
+     * 当找不到与指针对应的VM Heap时，函数就返回false，这就意味着判断出了"这是非指针"
+     * 当找到与指针对应的VM Heap时，函数就检查指针是否指着分配到的对象
+     */
     if (heap != NULL) {
         return dvmHeapBitmapIsObjectBitSet(&heap->objectBitmap, ptr) != 0;
     }

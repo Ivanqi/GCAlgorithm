@@ -194,6 +194,13 @@ dvmHeapBitmapZero(HeapBitmap *hb)
  * addresses are less than <finger> are not guaranteed to be seen by
  * the current XorWalk.  <finger> will be set to ULONG_MAX when the
  * end of the bitmap is reached.
+ * 
+ * dvmHeapBitmapXorWalk 的作用
+ *  1). 寻找位图内的标记位
+ *  2). 把对应标记位的对象存入缓冲区
+ *  3). 重复1和2直到缓冲区被填满
+ *  4). 当缓冲区满时，调用回调行数(scanBitmapCallback)
+ *  5). 对位图内进行全方位的搜索，搜索完毕即结束
  */
 bool
 dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
@@ -201,12 +208,17 @@ dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
                          const void *finger, void *arg),
         void *callbackArg)
 {
+    // 定义指针缓冲区
     static const size_t kPointerBufSize = 128;
-    void *pointerBuf[kPointerBufSize];
-    void **pb = pointerBuf;
+    void *pointerBuf[kPointerBufSize];  // 缓冲区的实体
+    void **pb = pointerBuf;             // pointerBuf 开头元素的指针
     size_t index;
     size_t i;
 
+/**
+ * 这个宏基本上只调用回调函数
+ * 计算把把存在缓冲区里的对象指针的个数和缓冲区自身交给回调函数，此外还要把下一个要标记的对象指针(finger_)也交给回调函数
+ */
 #define FLUSH_POINTERBUF(finger_) \
     do { \
         if (!callback(pb - pointerBuf, (void **)pointerBuf, \
@@ -218,6 +230,33 @@ dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
         pb = pointerBuf; \
     } while (false)
 
+/**
+ * hb_是位图、bits_是位图内的元素(像素0010010)这样的位串
+ * 
+ * static const unsigned long kHighBit = (unsigned long)1 << (HB_BITS_PER_WORD - 1);
+ *  把32位中的开头位(1000..00)的正数(位串)设定给kHight
+ * 
+ * const uintptr_t ptrBase = HB_INDEX_TO_OFFSET(i) + hb_->base; 
+ *  把对应的bits_开头位的对象指针设定给ptrBase
+ * 
+ * 之后执行while语句，直到bits_等于0为止
+ *  宏 CLZ() 中调用 ARM 汇编语言的CLZ 命令
+ *      CLZ命令会从位串的开头开始数0连续了多少次，并返回搜集到的结果
+ *      这样就可以求出到标记为止的右偏移数，然后将其存入rshift
+ *  bits_ &= ~(kHighBit >> rshift);
+ *      消除rshift查找到的位标记
+ *  *pb++ = (void *)(ptrBase + rshift * HB_OBJECT_ALIGNMENT);
+ *      求出对应标记位的对象指针，将其存入缓冲区
+ *      这项操作要一直进行到bits_内的标记全部消除(也就是变成0)为止
+ * 
+ * FLUSH_POINTERBUF(ptrBase + HB_BITS_PER_WORD * HB_OBJECT_ALIGNMENT);
+ *  把下一个要检查标记的对象指针传递给参数
+ * 
+ * index = HB_OFFSET_TO_INDEX(hb_->max - hb_->base);
+ *  重新计算index
+ *  这时因为回调函数可能害hb_hb_->max增加
+ *  对于增加的部分，也必须调用宏DECODE_BITS()
+ */
 #define DECODE_BITS(hb_, bits_, update_index_) \
     do { \
         if (UNLIKELY(bits_ != 0)) { \
@@ -291,7 +330,7 @@ dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
     } else {
         /* One of the bitmaps is empty.
          */
-        index = 0;
+        index = 0;  // 表示位图的开头。将其初始值设定为0，直到第287行，index的值一直为0
     }
 
     /* If one bitmap's max is larger, walk through the rest of the
@@ -300,10 +339,16 @@ dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
 const HeapBitmap *longHb;
 unsigned long int *p;
 //TODO: may be the same size, in which case this is wasted work
+    /**
+     * 比较hb1跟hb2的max值，将max值较大的位图设为longHb
+     * 不过hb2是虚拟的位图，其max被设置得比h1小，因此将h1设定为longHb
+     */
     longHb = (hb1->max > hb2->max) ? hb1 : hb2;
     i = index;
+    // 用于获取位图的最大索引
     index = HB_OFFSET_TO_INDEX(longHb->max - longHb->base);
     p = longHb->bits + i;
+    // 按照从索引0到最大索引的顺序循环，将位图的元素按顺序交给宏DECODE_BITS()
     for (/* i = i */; i <= index; i++) {
 //TODO: unroll this
         unsigned long bits = *p++;
