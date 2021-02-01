@@ -1167,6 +1167,11 @@ hprofDumpUnmarkedObjects(const HeapBitmap markBitmaps[],
 }
 #endif
 
+/**
+ * 这个函数是从dvmHeapBitmapXorWalk()函数调用的
+ * 该函数把装入缓冲区的对象指针传递给参数
+ * 跟标记阶段的不同之处在于，所传递的对象指针都是"非活动"的
+ */
 static bool
 sweepBitmapCallback(size_t numPtrs, void **ptrs, const void *finger, void *arg)
 {
@@ -1220,6 +1225,7 @@ sweepBitmapCallback(size_t numPtrs, void **ptrs, const void *finger, void *arg)
     }
     // TODO: dvmHeapSourceFreeList has a loop, just like the above
     // does. Consider collapsing the two loops to save overhead.
+    // 释放对象内连接的数据
     dvmHeapSourceFreeList(numPtrs, origPtrs);
 
     return true;
@@ -1236,6 +1242,8 @@ static int isUnmarkedObject(void *object)
 
 /* Walk through the list of objects that haven't been
  * marked and free them.
+ * 
+ * 获取两个位图。这个函数负责获取对象位图和标记位图
  */
 void
 dvmHeapSweepUnmarkedObjects(int *numFreed, size_t *sizeFreed)
@@ -1259,7 +1267,12 @@ dvmHeapSweepUnmarkedObjects(int *numFreed, size_t *sizeFreed)
     origBytesAllocated = dvmHeapSourceGetValue(HS_BYTES_ALLOCATED, NULL, 0);
 
     markContext = &gDvm.gcHeap->markContext;
+    // 获取标记位图
     markBitmaps = markContext->bitmaps;
+    /**
+     * 获取对象位图. numBitmaps表示的是链表内位图表格的数量
+     * 因为每个VM Heap都有一个位图表格，所以这个值大多数情况下为2或3
+     *  */
     numBitmaps = dvmHeapSourceGetObjectBitmaps(objectBitmaps,
             HEAP_SOURCE_MAX_HEAP_COUNT);
 #ifndef NDEBUG

@@ -272,6 +272,9 @@ countAllocation(Heap *heap, const void *ptr, bool isObj)
     assert(heap->bytesAllocated < mspace_footprint(heap->msp));
 }
 
+/**
+ * countFree()函数则对字节数和对象数量执行递减计数
+ */
 static inline void
 countFree(Heap *heap, const void *ptr, bool isObj)
 {
@@ -285,6 +288,7 @@ countFree(Heap *heap, const void *ptr, bool isObj)
         heap->bytesAllocated = 0;
     }
     if (isObj) {
+        // 执行dvmHeapBitmapClearObjectBit()函数，这个函数负责从对象位图消去标记
         dvmHeapBitmapClearObjectBit(&heap->objectBitmap, ptr);
         if (heap->objectsAllocated > 0) {
             heap->objectsAllocated--;
@@ -859,11 +863,13 @@ dvmHeapSourceFree(void *ptr)
 
     heap = ptr2heap(gHs, ptr);
     if (heap != NULL) {
+        // 从对象位图消去标记
         countFree(heap, ptr, true);
         /* Only free objects that are in the active heap.
          * Touching old heaps would pull pages into this process.
          */
         if (heap == gHs->heaps) {
+            // 释放内存(dlmalloc)
             mspace_free(heap->msp, ptr);
         }
     }

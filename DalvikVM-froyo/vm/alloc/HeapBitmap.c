@@ -314,12 +314,18 @@ dvmHeapBitmapXorWalk(const HeapBitmap *hb1, const HeapBitmap *hb2,
 
         offset = ((hb1->max < hb2->max) ? hb1->max : hb2->max) - hb1->base;
 //TODO: keep track of which (and whether) one is longer for later
+        // 求位图开头的index
         index = HB_OFFSET_TO_INDEX(offset);
 
         p1 = hb1->bits;
         p2 = hb2->bits;
         for (i = 0; i <= index; i++) {
 //TODO: unroll this. pile up a few in locals?
+            /**
+             * 比较两个位图内的元素，把指针移动到下一个元素
+             * 比较元素的时候使用的是 "^"(XOR)运算符
+             * XOR有个特点，那就是"如果两个位是同值则返回0，如果不为同值则返回1"
+             */
             unsigned long int diff = *p1++ ^ *p2++;
             DECODE_BITS(hb1, diff, false);
 //BUG: if the callback was called, either max could have changed.

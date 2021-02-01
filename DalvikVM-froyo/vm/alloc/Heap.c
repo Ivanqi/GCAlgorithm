@@ -989,6 +989,7 @@ void dvmCollectGarbageInternal(bool collectSoftReferences, enum GcReason reason)
     dvmDumpMonitorInfo("before sweep");
 #endif
     LOGD_HEAP("Sweeping...");
+    // 清除操作
     dvmHeapSweepUnmarkedObjects(&numFreed, &sizeFreed);
 #ifdef WITH_DEADLOCK_PREDICTION
     dvmDumpMonitorInfo("after sweep");
