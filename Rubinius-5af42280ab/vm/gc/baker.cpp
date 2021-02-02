@@ -93,10 +93,15 @@ namespace rubinius {
     stats::GCStats::get()->objects_promoted.start();
     stats::GCStats::get()->collect_young.start();
 #endif
-
+    // 搜索从记录集引用的对象
     Object* tmp;
+    // 负责把指向现在的记录集的指针存入局部变量current_rs
     ObjectArray *current_rs = object_memory->remember_set;
 
+    /**
+     * 把ObjectArray类的实例设为new,把这个实例作为新的记录集存入object_memory->remember中
+     * ObjectArray是以Object元素的vector类(动态数据)的别名
+     */
     object_memory->remember_set = new ObjectArray(0);
     total_objects = 0;
 
@@ -106,6 +111,9 @@ namespace rubinius {
 
     promoted_current = promoted_insert = promoted_->begin();
 
+    /**
+     * 按顺序取出记录集里的对象的指针
+     */
     for(ObjectArray::iterator oi = current_rs->begin();
         oi != current_rs->end();
         ++oi) {
@@ -116,8 +124,14 @@ namespace rubinius {
         assert(tmp->zone == MatureObjectZone);
         assert(!tmp->forwarded_p());
 
-        // Remove the Remember bit, since we're clearing the set.
+        /**
+         * Remove the Remember bit, since we're clearing the set.
+         * clear_remember()将对象的标记内的Remember位设为0
+         * */
         tmp->clear_remember();
+        /**
+         * scan_object()函数搜索指定的对象，把对象内的子对象复制到To空间
+         */
         scan_object(tmp);
       }
     }

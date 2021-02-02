@@ -198,6 +198,11 @@ namespace rubinius {
     assert(target->zone == MatureObjectZone);
     /* If it's already remembered, ignore this request */
     if(target->remembered_p()) return;
+    /**
+     * set_remember()负责将对象标记内的Remember位设为1
+     * 可见这跟clear_remember()正好相反。设置Remember位后，指针就会被追加到remember_set里
+     * 这样就实现了Rubinius的写入屏障
+     */
     target->set_remember();
     remember_set->push_back(target);
   }
