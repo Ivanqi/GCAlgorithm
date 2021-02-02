@@ -40,6 +40,10 @@ namespace rubinius {
       std::cout << "detected " << obj << " during baker collection\n";
     }
 
+    /**
+     * forwarded_p()负责返回是否设定了forwarding指针
+     * 如果条件为真, forwarded_p()就会返回obj的forwarding指针
+     */
     if(!obj->reference_p()) return obj;
 
     if(obj->zone != YoungObjectZone) return obj;
@@ -49,16 +53,30 @@ namespace rubinius {
     // This object is already in the next space, we don't want to
     // copy it again!
     // TODO test this!
+    /**
+     * next值得是To空间，如果obj为To空间内的对象，就不进行复制
+     * 这样一来obj就会被原样返回
+     */
     if(next->contains_p(obj)) return obj;
 
+    /**
+     * obj->age负责计算obj的年龄，这里的年龄指的是obj当过多少次GC复制算法(新生代GC)的对象
+     * 当age(年龄)为1时，就表示这个对象过去只当过一次GC复制算法的对象
+     * 
+     * lifetime是视为新生代的年龄的阀值。一旦age超过lifetime,这个对象就到了老年代的年龄，必须将其移动(晋升)到老年代空间
+     */
     if(unlikely(obj->age++ >= lifetime)) {
-      copy = object_memory->promote_object(obj);
+      copy = object_memory->promote_object(obj);  // 负责对象移动(晋升)到老年空间
 
-      promoted_push(copy);
-    } else if(likely(next->enough_space_p(obj->size_in_bytes(object_memory->state)))) {
-      copy = next->copy_object(object_memory->state, obj);
+      promoted_push(copy);  // 将其指针记录在晋升链表中
+    } else if(likely(next->enough_space_p(obj->size_in_bytes(object_memory->state)))) { // 检查To空间里还有没有可以复制的空闲空间
+      /**
+       * size_in_bytes() 负责返回对象参数的大小
+       * enough_space_p() 负责调查还有没有指定大小的空闲空间
+       */
+      copy = next->copy_object(object_memory->state, obj);  // copy_object() 执行对象复制
       total_objects++;
-    } else {
+    } else {  // 如果To空间里已经没有空闲空间了，那就只好让对象晋升了
       copy = object_memory->promote_object(obj);
       promoted_push(copy);
     }
@@ -67,6 +85,10 @@ namespace rubinius {
       std::cout << "detected " << copy << " during baker collection (2)\n";
     }
 
+    /**
+     * obj就已经复制到To空间或老年代空间了
+     * 在这里将目标空间的地址作为forwarding指针，设定给原空间的对象
+     */
     obj->set_forward(copy);
     return copy;
   }
@@ -93,7 +115,7 @@ namespace rubinius {
     stats::GCStats::get()->objects_promoted.start();
     stats::GCStats::get()->collect_young.start();
 #endif
-    // 搜索从记录集引用的对象
+    // (1) 搜索从记录集引用的对象
     Object* tmp;
     // 负责把指向现在的记录集的指针存入局部变量current_rs
     ObjectArray *current_rs = object_memory->remember_set;
@@ -102,7 +124,7 @@ namespace rubinius {
      * 把ObjectArray类的实例设为new,把这个实例作为新的记录集存入object_memory->remember中
      * ObjectArray是以Object元素的vector类(动态数据)的别名
      */
-    object_memory->remember_set = new ObjectArray(0);
+    object_memory->remember_set = new ObjectArray(0); // 已晋升对象的动态数组
     total_objects = 0;
 
     // Tracks all objects that we promoted during this run, so
@@ -137,10 +159,23 @@ namespace rubinius {
     }
 
     delete current_rs;
-
+    
+    // (2). 复制从根引用的对象
+    /**
+     * 内置类、模块、符号
+     * data.roots为双向链表，元素内存有指向内置类的指针，实际负责取出这些指针的是函数get()
+     * reference_p()负责检查指针是否为内嵌对象
+     * young_object_p() 负责检查指针所指的对象是否在新生代空间
+     **/
     for(Roots::Iterator i(data.roots()); i.more(); i.advance()) {
       tmp = i->get();
       if(tmp->reference_p() && tmp->young_object_p()) {
+        /**
+         * 复制对象的操作是由成员函数saw_object()执行的
+         * saw_object()成功复制完对象后会返回目标空间的地址
+         * 如果对象已经被复制了，那么saw_object()就会返回forwarding指针(指向目标空间的指针)
+         * 在调用完saw_object()后，成员函数set()把返回的目标空间地址设定为根。也就是说，在这里执行了根的重写操作
+         */
         i->set(saw_object(tmp));
       }
     }
@@ -194,21 +229,38 @@ namespace rubinius {
      * This way, when there are no more objects that are promoted, the last
      * ObjectArray will be empty.
      * */
+    // (3) 搜索复制完毕的对象
 
+    /**
+     * promoted_current: 指示搜索位置
+     * promoted_insert: 指示保存着指向下一个晋升对象的指针的场所
+     */
     promoted_current = promoted_insert = promoted_->begin();
 
+    /**
+     * 这个while循环的延续条件是"有未搜索的已晋升对象" 或 "To空间里有未搜索的对象"。也就是说，只要搜索完所有已经复制的对象，这个循环就停止了
+     * 
+     * 为什么处理得这么复杂？原因就是内存的使用效率
+     */
     while(promoted_->size() > 0 || !fully_scanned_p()) {
       if(promoted_->size() > 0) {
+        /**
+         * for 循环执行的操作是搜索所有已经从From空间晋升的对象
+         */
         for(;promoted_current != promoted_->end();
             ++promoted_current) {
           tmp = *promoted_current;
           assert(tmp->zone == MatureObjectZone);
-          scan_object(tmp);
+          scan_object(tmp); // 用来执行搜索
           if(watched_p(tmp)) {
             std::cout << "detected " << tmp << " during scan of promoted objects.\n";
           }
         }
 
+        /**
+         * 通过promoted_insert的位置重写调整动态数组的大小
+         * 然后promoted_current = promoted_insert指向位置重合，为下一项处理做准备
+         */
         promoted_->resize(promoted_insert - promoted_->begin());
         promoted_current = promoted_insert = promoted_->begin();
 

@@ -90,6 +90,15 @@ namespace rubinius {
     ObjectArray::iterator promoted_insert, promoted_current;
 
     // Assume ObjectArray is a vector!
+    /**
+     * 如果promoted_insert和promoted_current指向的位置是一样的，就往promoted_里新追加元素
+     * 如果不是，就在promoted_insert指向的位置重写obj，将promoted_insert偏移到下一个位置
+     * 因为promoted_ 内那些"搜索完毕"的元素已经不会再被使用了，所有不管将其重写还是释放都没有关系
+     * 
+     * 在搜索已晋升的对象的过程中，一旦发生子对象晋升的情况，就可以考虑两中操作
+     *  1). 程序会在 baker.cpp:248~266 的for循环内搜索对象
+     *  2). 就不是在这次循环内搜索对象，而是在下一次的for循环内搜索对象
+     */
     void promoted_push(Object* obj) {
       if(promoted_insert == promoted_current) {
         size_t i = promoted_insert - promoted_->begin(),
