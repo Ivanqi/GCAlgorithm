@@ -96,7 +96,7 @@ namespace rubinius {
      * 因为promoted_ 内那些"搜索完毕"的元素已经不会再被使用了，所有不管将其重写还是释放都没有关系
      * 
      * 在搜索已晋升的对象的过程中，一旦发生子对象晋升的情况，就可以考虑两中操作
-     *  1). 程序会在 baker.cpp:248~266 的for循环内搜索对象
+     *  1). 程序会在 baker.cpp:for(;promoted_current != promoted_->end();++promoted_current) 的for循环内搜索对象
      *  2). 就不是在这次循环内搜索对象，而是在下一次的for循环内搜索对象
      */
     void promoted_push(Object* obj) {

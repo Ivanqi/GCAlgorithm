@@ -93,7 +93,11 @@ namespace rubinius {
     return copy;
   }
 
+  /**
+   * 复制搜素To空间里那些未搜索的对象
+   */
   void BakerGC::copy_unscanned() {
+    // next_unscanned()函数负责返回指向下一个未搜索对象的指针。如果没有未搜索的对象，那么函数就会返回NULL
     Object* iobj = next->next_unscanned(object_memory->state);
 
     while(iobj) {
@@ -241,6 +245,8 @@ namespace rubinius {
      * 这个while循环的延续条件是"有未搜索的已晋升对象" 或 "To空间里有未搜索的对象"。也就是说，只要搜索完所有已经复制的对象，这个循环就停止了
      * 
      * 为什么处理得这么复杂？原因就是内存的使用效率
+     *  如果在搜索对象的过程中其子对象发生了晋升，倒是可以把对象的指针追加到动态数组的末尾，不过这样一类，就变成了晋升和搜索的死循环，可能会造成巨大的动态数据
+     *  因此这里采用了另一种方法，就是重新利用那些已经搜索完毕的数组元素
      */
     while(promoted_->size() > 0 || !fully_scanned_p()) {
       if(promoted_->size() > 0) {
@@ -269,6 +275,12 @@ namespace rubinius {
       /* As we're handling promoted objects, also handle unscanned objects.
        * Scanning these unscanned objects (via the scan pointer) will
        * cause more promotions. */
+      /**
+       * 搜索To空间里未搜索的对象
+       * 在搜索To空间的对象的过程中，可能有对象已经晋升了。这种情况下while循环是不会结束的，要从头来过
+       * 像这样，程序会把所有的活动对象复制到To空间或老年代空间
+       * 此外，因为调用copy_unscanned()函数的时候promoted_insert和promoted_current指着同一个位置，所以已经晋升的对象会被追加到promoted_末尾
+       * */
       copy_unscanned();
     }
 
@@ -282,6 +294,8 @@ namespace rubinius {
     /* Another than is going to be found is found now, so we go back and
      * look at everything in current and call delete_object() on anything
      * thats not been forwarded. */
+
+    // (4) 垃圾对象的后处理
     find_lost_souls();
 
     /* Check any weakrefs and replace dead objects with nil*/
@@ -335,10 +349,26 @@ namespace rubinius {
     }
   }
 
+  /**
+   * find_lost_souls()函数被用于执行垃圾对象的后处理，那么后处理又是什么？
+   *  根据对象的种类不同，有些对象持有GC对象范围之外的内存空间
+   *  简单来说，这些空间就是用malloc()等分配的VM Heap范围外的内存空间
+   *  因为这些内存空间并没有分配到From空间，所以自然不能通过GC复制算法将其重新利用
+   *  当对象成了垃圾时，如果不明确释放内存的话，就会产生内存泄漏
+   *  
+   *  执行释放操作的函数正是find_lost_souls()。也就是说，在这里我们将位于GC对象范围外的那些不能再次利用的内存空间称为“失落的灵魂”
+   */
   void BakerGC::find_lost_souls() {
     Object* obj = current->first_object();
     while(obj < current->current) {
+      /**
+       * 调用obj的forwarded_p()。因为没有forwarding指针，说明这个对象没有被复制，所以计算机将其视为垃圾对象
+       */
       if(!obj->forwarded_p()) {
+        /**
+         * 虽然delete_object()中调用的是每个对象的成员函数cleanup()，但实现了这个函数的只有Regexp类和Bitnum类
+         * 除此之外的类的对象都不会出现"失落的灵魂"
+         */
         delete_object(obj);
 
 #ifdef RBX_GC_STATS
