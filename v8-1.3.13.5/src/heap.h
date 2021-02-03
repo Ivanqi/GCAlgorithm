@@ -1353,11 +1353,15 @@ class MarkingStack {
   // Push the (marked) object on the marking stack if there is room,
   // otherwise mark the object as overflowed and wait for a rescan of the
   // heap.
+  /**
+   * Push内检查标记栈是否溢出。如果标记栈发生溢出，就不把Push()对象指针追加到标记栈
+   */
   void Push(HeapObject* object) {
     CHECK(object->IsHeapObject());
     if (is_full()) {
+      // 溢出时候的对策。无视那些溢出后应该被Push()到标记栈的指针
       object->SetOverflow();
-      overflowed_ = true;
+      overflowed_ = true; // 记录标记栈自身也发生了溢出这一信息
     } else {
       *(top_++) = object;
     }

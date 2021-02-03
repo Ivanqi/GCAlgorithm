@@ -508,14 +508,21 @@ void Heap::MarkCompact(GCTracer* tracer) {
   tracer->set_full_gc_count(mc_count_);
   LOG(ResourceEvent("markcompact", "begin"));
 
+  // GC预处理
+
+  /**
+   * 决定执行GC标记 - 压缩算法还是GC标记 - 清除算法，把各个内存空间初始化以用于GC等
+   */
   MarkCompactCollector::Prepare(tracer);
 
-  bool is_compacting = MarkCompactCollector::IsCompacting();
+  bool is_compacting = MarkCompactCollector::IsCompacting();  // 在使用GC标记-压缩算法时为真
 
   MarkCompactPrologue(is_compacting);
 
+  // GC开始: 实际执行GC
   MarkCompactCollector::CollectGarbage();
 
+  // GC后处理: 释放因GC而变成为空的老年代页面等
   MarkCompactEpilogue(is_compacting);
 
   LOG(ResourceEvent("markcompact", "end"));
@@ -3100,6 +3107,7 @@ void Heap::IterateStrongRoots(ObjectVisitor* v) {
   v->VisitPointers(&roots_[0], &roots_[kStrongRootListLength]);
   SYNCHRONIZE_TAG("strong_root_list");
 
+  // 标记JavaScript中的内置类(Map)、函数、符号
   v->VisitPointer(bit_cast<Object**, String**>(&hidden_symbol_));
   SYNCHRONIZE_TAG("symbol");
 

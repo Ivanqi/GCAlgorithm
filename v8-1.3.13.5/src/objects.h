@@ -1094,9 +1094,12 @@ class MapWord BASE_EMBEDDED {
   //   second bit = 1, overflowed
   // An object is only marked as overflowed when it is marked as live while
   // the marking stack is overflowed.
-  static const int kMarkingBit = 0;  // marking bit
+  /**
+   * 首先把map地址的低1位作为标志位来使用，把低2位作为溢出标记(位)来使用
+   */
+  static const int kMarkingBit = 0;  // marking bit.标志位
   static const int kMarkingMask = (1 << kMarkingBit);  // marking mask
-  static const int kOverflowBit = 1;  // overflow bit
+  static const int kOverflowBit = 1;  // overflow bit.溢出位
   static const int kOverflowMask = (1 << kOverflowBit);  // overflow mask
 
   // Forwarding pointers and map pointer encoding
@@ -1674,8 +1677,14 @@ class JSObject: public HeapObject {
   static const int kFieldsAdded = 3;
 
   // Layout description.
+  /**
+   * HeapObject::kHeaderSize 是用HeapObject定义的域的总大小
+   * 因为JSObject继承了HeapObject，所以必须能使用父类的域
+   * 因此，最初的域位置(kPropertiesOffset)就在HeapObject类内的域的定义之后(HeapObject:kHeaderSize)
+   */
   static const int kPropertiesOffset = HeapObject::kHeaderSize;
   static const int kElementsOffset = kPropertiesOffset + kPointerSize;
+  // 把JSObject::kHeaderSize设定到最开始的域位置
   static const int kHeaderSize = kElementsOffset + kPointerSize;
 
   STATIC_CHECK(kHeaderSize == Internals::kJSObjectHeaderSize);

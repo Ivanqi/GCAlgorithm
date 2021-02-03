@@ -1101,6 +1101,7 @@ void HeapObject::Iterate(ObjectVisitor* v) {
 }
 
 
+// 标记子对象
 void HeapObject::IterateBody(InstanceType type, int object_size,
                              ObjectVisitor* v) {
   // Avoiding <Type>::cast(this) because it accesses the map pointer field.
@@ -1132,6 +1133,12 @@ void HeapObject::IterateBody(InstanceType type, int object_size,
     case JS_GLOBAL_PROXY_TYPE:
     case JS_GLOBAL_OBJECT_TYPE:
     case JS_BUILTINS_OBJECT_TYPE:
+      /**
+       * JSObjectIterateBody()函数负责把指向标记对象内的子对象的指针群交给visitor
+       * 此时，作为参数给出的v(visitor)是MarkingVisitor类的实例
+       * 
+       * MarkingVisitor类最终将所得到的指向子对象的指针作为参数，来调用MarkCompactCollector类的成员函数MarkUnmarkedObject()
+       */
       reinterpret_cast<JSObject*>(this)->JSObjectIterateBody(object_size, v);
       break;
     case ODDBALL_TYPE:
@@ -1233,8 +1240,14 @@ String* JSObject::constructor_name() {
 }
 
 
+/**
+ * JSObjectIterateBody()最终把JSObject类实例内的指针群的开头和结尾位置交给visitor(ObjectVisitor类的实例)中定义的成员函数VisitPointers()
+ */
 void JSObject::JSObjectIterateBody(int object_size, ObjectVisitor* v) {
-  // Iterate over all fields in the body. Assumes all are Object*.
+  /**
+   * Iterate over all fields in the body. Assumes all are Object*.
+   * 把对象内的指针域群传递给visitor
+   * */
   IteratePointers(v, kPropertiesOffset, object_size);
 }
 
