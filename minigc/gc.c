@@ -94,6 +94,7 @@ void* mini_gc_malloc(size_t req_size) {
     if (req_size <= 0) {
         return NULL;
     }
+    printf("flag0 p:%p, prevp:%p\n", p, prevp);
 
     if ((prevp = free_list) == NULL) {
         if (!(p = add_heap(TINY_HEAP_SIZE))) {
@@ -102,29 +103,42 @@ void* mini_gc_malloc(size_t req_size) {
         prevp = free_list = p;
     }
 
+    bool equalMark = 0;
+
     for (p = prevp->next_free; ; prevp = p, p = p->next_free) {
-        // printf("flag1 p:%p\t p->size:%zu\treq_size:%zu\n", p, p->size, req_size);
+        printf("flag1 p:%p\t p->size:%zu\treq_size:%zu\n", p, p->size, req_size);
         if (p->size >= req_size) {
-            if (p->size == req_size) {
+            if (p->size == req_size) {  // 需分配的内存数量和当前内存数量相等
                 // just fit
-                prevp->next_free = p->next_free;
+                if (p == p->next_free) {
+                    equalMark = 1;
+                } else {
+                    prevp->next_free = p->next_free;    // 切换下一个next_free,为了寻找大于req_size的内存
+                }
+                printf("prevp: %p\t prevp->next_free: %p\t, p:%p\t p->next_free:%p\n", prevp, prevp->next_free, p, p->next_free);
             } else {
                 // to big
                 // 分配内存。内存从后面往前分配
                 p->size -= (req_size + HEADER_SIZE);
-                // printf("flag2 p:%p\tp->size:%zu\n", p, p->size);
+                printf("flag2 p:%p\tp->size:%zu\n", p, p->size);
                 p = NEXT_HEADER(p);
-                // printf("flag3 p:%p\n", p);
+                printf("flag3 p:%p\n", p);
                 p->size = req_size;
-                // printf("p->size:%zu\t p:%p\t req_size:%d\n\n", p->size, p, req_size);
+                printf("p->size:%zu\t p:%p\t req_size:%d\n\n", p->size, p, req_size);
             }
-            free_list = prevp;
-            FL_SET(p, FL_ALLOC);    // 设置当前p地址的flag为FL_ALLOC(已分配)
-            return (void*) (p + 1);
+
+            if (!equalMark) {
+                free_list = prevp;
+                FL_SET(p, FL_ALLOC);    // 设置当前p地址的flag为FL_ALLOC(已分配)
+                return (void*) (p + 1);
+            }
         }
 
+        // 如果p等于free_list，内存从后往前分配内存，已经分配完所有内存
+        printf("p == free_list\n");
         if (p == free_list) {
-            if (!do_gc) {
+            if (!do_gc) {   // 执行GC操作
+                printf("gc\n");
                 garbage_collect();
                 do_gc = 1;
             } else if ((p = grow(req_size)) == NULL) {
@@ -266,6 +280,7 @@ static void gc_mark_register(void) {
     size_t i;
 
     setjmp(env);
+    // setjmp是怎么工作的: https://zhuanlan.zhihu.com/p/82492121
     for (i = 0; i < sizeof(env); i++) {
         gc_mark(((void **)env)[i]);
     }
@@ -339,9 +354,13 @@ int main() {
     void *a = mini_gc_malloc(10);
     void *b = mini_gc_malloc(10);
     void *c = mini_gc_malloc(10);
+    void *d = mini_gc_malloc(16264);
+    void *e = mini_gc_malloc(10);
 
     printf("*a:%p\n", a);
     printf("*b:%p\n", b);
     printf("*c:%p\n", c);
+    printf("*d:%p\n", d);
+    printf("*e:%p\n", e);
     return 0;
 }
