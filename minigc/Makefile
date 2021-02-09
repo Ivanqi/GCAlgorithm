@@ -1,5 +1,5 @@
 CC = gcc
-SRCS = gc.c
+SRCS = gc.c gc_test.c
 BIN = gc
 
 

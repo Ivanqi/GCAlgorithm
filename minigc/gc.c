@@ -12,39 +12,17 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <assert.h>
 #include <unistd.h>
 #include <setjmp.h>
 #include "gc.h"
 
-typedef struct header {
-    size_t flags;
-    size_t size;
-    struct header *next_free;
-} Header;
-
-typedef struct gc_heap {
-    Header *slot;
-    size_t size;
-} GC_Heap;
-
-#define TINY_HEAP_SIZE 0x4000
-#define ALIGN(x, a) (((x) + (a - 1)) & ~(a - 1))
-#define NEXT_HEADER(x) ((Header *)((size_t)(x + 1) + x->size))
-#define PTRSIZE ((size_t)sizeof(void *))
-#define HEADER_SIZE ((size_t)sizeof(Header))
-#define HEAP_LIMIT 10000
-
-// flags
-#define FL_ALLOC 0x1
-#define FL_MARK 0x2
-#define FL_SET(x, f) (((Header *)x)->flags |= f)
-#define FL_UNSET(x, f) (((Header *)x)->flags &= ~(f))
-#define FL_TEST(x, f) (((Header *)x)->flags & f)
-
 static Header *free_list;
 static GC_Heap gc_heaps[HEAP_LIMIT];
 static size_t gc_heaps_used = 0;
+
+static Header* getFreeList() {
+    return free_list;
+}
 
 static Header* add_heap(size_t req_size) {
     void *p;
@@ -76,7 +54,8 @@ static Header* add_heap(size_t req_size) {
 
 static Header* grow(size_t req_size) {
     Header *cp, *up;
-
+    printf("grow\n");
+    // 增加新内存
     if (!(cp = add_heap(req_size))) {
         return NULL;
     }
@@ -94,7 +73,6 @@ void* mini_gc_malloc(size_t req_size) {
     if (req_size <= 0) {
         return NULL;
     }
-    printf("flag0 p:%p, prevp:%p\n", p, prevp);
 
     if ((prevp = free_list) == NULL) {
         if (!(p = add_heap(TINY_HEAP_SIZE))) {
@@ -103,39 +81,30 @@ void* mini_gc_malloc(size_t req_size) {
         prevp = free_list = p;
     }
 
-    bool equalMark = 0;
 
     for (p = prevp->next_free; ; prevp = p, p = p->next_free) {
         printf("flag1 p:%p\t p->size:%zu\treq_size:%zu\n", p, p->size, req_size);
         if (p->size >= req_size) {
-            if (p->size == req_size) {  // 需分配的内存数量和当前内存数量相等
+            if (p->size == req_size) {  // 需分配的内存数量和当前内存数量相等时，不分配内存
                 // just fit
-                if (p == p->next_free) {
-                    equalMark = 1;
-                } else {
-                    prevp->next_free = p->next_free;    // 切换下一个next_free,为了寻找大于req_size的内存
-                }
-                printf("prevp: %p\t prevp->next_free: %p\t, p:%p\t p->next_free:%p\n", prevp, prevp->next_free, p, p->next_free);
+                prevp->next_free = p->next_free;    // 切换下一个next_free,为了寻找大于req_size的内存
             } else {
                 // to big
                 // 分配内存。内存从后面往前分配
                 p->size -= (req_size + HEADER_SIZE);
-                printf("flag2 p:%p\tp->size:%zu\n", p, p->size);
+                // printf("flag2 p:%p\tp->size:%zu\n", p, p->size);
                 p = NEXT_HEADER(p);
-                printf("flag3 p:%p\n", p);
+                // printf("flag3 p:%p\n", p);
                 p->size = req_size;
-                printf("p->size:%zu\t p:%p\t req_size:%d\n\n", p->size, p, req_size);
+                // printf("p->size:%zu\t p:%p\t req_size:%d\n\n", p->size, p, req_size);
             }
-
-            if (!equalMark) {
-                free_list = prevp;
-                FL_SET(p, FL_ALLOC);    // 设置当前p地址的flag为FL_ALLOC(已分配)
-                return (void*) (p + 1);
-            }
+            free_list = prevp;
+            FL_SET(p, FL_ALLOC);    // 设置当前p地址的flag为FL_ALLOC(已分配)
+            return (void*) (p + 1);
         }
 
         // 如果p等于free_list，内存从后往前分配内存，已经分配完所有内存
-        printf("p == free_list\n");
+        printf("p == free_list: %d\n", p == free_list);
         if (p == free_list) {
             if (!do_gc) {   // 执行GC操作
                 printf("gc\n");
@@ -161,7 +130,8 @@ void mini_gc_free(void *ptr) {
         }
     }
 
-    if (NEXT_HEADER(target) == hit->next_free) {
+    // 为target增加size和next_free
+    if (NEXT_HEADER(target) ==  hit->next_free) {
         // merge
         target->size += (hit->next_free->size + HEADER_SIZE);
         target->next_free = hit->next_free->next_free;
@@ -170,6 +140,7 @@ void mini_gc_free(void *ptr) {
         target->next_free = hit->next_free;
     }
 
+    // 为hit增加size和next_free
     if (NEXT_HEADER(hit) == target) {
         // merge
         hit->size += (target->size + HEADER_SIZE);
@@ -180,7 +151,7 @@ void mini_gc_free(void *ptr) {
     }
 
     free_list = hit;
-    target->flags = 0;
+    target->flags = 0;  // 初始化flags
 }
 
 
@@ -201,11 +172,18 @@ static GC_Heap *hit_cache = NULL;
 
 static GC_Heap* is_pointer_to_heap(void *ptr) {
     size_t i;
+    /**
+     * 意思是ptr是否在hit_cache->slot已经分配的内存区间内
+     */
     if (hit_cache && ((void *)hit_cache->slot) <= ptr && (size_t)ptr < (((size_t)hit_cache->slot) + hit_cache->size)) {
         return hit_cache;
     }
 
     for (i = 0; i < gc_heaps_used; i++) {
+        /**
+         * 判断gc_heaps[i].slot内存分配从低地址往高地址分配
+         * 这里的意思是ptr是否在gc_heaps[i].slot已经分配的内存区间内
+         */
         if ((((void *)gc_heaps[i].slot) <= ptr) && ((size_t)ptr < (((size_t)gc_heaps[i].slot) + gc_heaps[i].size))) {
             hit_cache = &gc_heaps[i];
             return &gc_heaps[i];
@@ -215,12 +193,16 @@ static GC_Heap* is_pointer_to_heap(void *ptr) {
     return NULL;
 }
 
+/**
+ * 获取头信息
+ */
 static Header* get_header(GC_Heap *gh, void *ptr) {
     Header *p, *pend, *pnext;
 
     pend = (Header *)(((size_t)gh->slot) + gh->size);
     for (p = gh->slot; p < pend; p = pnext) {
         pnext = NEXT_HEADER(p);
+        // 确定内存的范围
         if ((void *)(p + 1) <= ptr && ptr < (void *)pnext) {
             return p;
         }
@@ -244,7 +226,10 @@ static void set_stack_end(void) {
     long dummy;
 
     // referenced bdw-gc mark_rts.c
+    dummy = 42;
+
     stack_end = (void *)&dummy;
+    printf("stack_start: %p, stack_end:%p\n", stack_start, stack_end);
 }
 
 static void gc_mark_range(void *start, void *end);
@@ -255,18 +240,22 @@ static void gc_mark(void *ptr) {
 
     // mark check
     if (!(gh = is_pointer_to_heap(ptr))) return;
+    // 获取头信息
     if (!(hdr = get_header(gh, ptr))) return;
+    // 检测内存是否分配
     if (!FL_TEST(hdr, FL_ALLOC)) return;
+    // 检测是否被标记。如果被标记了，就返回
     if (FL_TEST(hdr, FL_MARK)) return;
 
-    // marking
+    // marking. 标记
     FL_SET(hdr, FL_MARK);
     DEBUG(printf("mark ptr: %p, header: %p\n", ptr, hdr));
 
-    // mark children
+    // mark children.标记子节点
     gc_mark_range((void *)(hdr + 1), (void *)NEXT_HEADER(hdr));
 }
 
+// 范围标记
 static void gc_mark_range(void *start, void *end) {
     void *p;
 
@@ -284,6 +273,7 @@ static void gc_mark_register(void) {
     for (i = 0; i < sizeof(env); i++) {
         gc_mark(((void **)env)[i]);
     }
+    printf("\n");
 }
 
 static void gc_mark_stack(void) {
@@ -346,21 +336,4 @@ void garbage_collect(void) {
 
     // sweeping
     gc_sweep();
-}
-
-
-int main() {
-
-    void *a = mini_gc_malloc(10);
-    void *b = mini_gc_malloc(10);
-    void *c = mini_gc_malloc(10);
-    void *d = mini_gc_malloc(16264);
-    void *e = mini_gc_malloc(10);
-
-    printf("*a:%p\n", a);
-    printf("*b:%p\n", b);
-    printf("*c:%p\n", c);
-    printf("*d:%p\n", d);
-    printf("*e:%p\n", e);
-    return 0;
 }
