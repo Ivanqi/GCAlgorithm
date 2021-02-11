@@ -1,28 +1,11 @@
-#ifndef DO_DEBUG
-#define DEBUG(exp) (exp)
-#else
-#define DEBUG(exp)
-#endif
-
-#ifndef DO_DEBUG
-#define NDEBUG
-#endif
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
 #include <setjmp.h>
+#include <assert.h>
 #include "gc.h"
-
-static Header *free_list;
-static GC_Heap gc_heaps[HEAP_LIMIT];
-static size_t gc_heaps_used = 0;
-
-static Header* getFreeList() {
-    return free_list;
-}
 
 static Header* add_heap(size_t req_size) {
     void *p;
@@ -54,7 +37,6 @@ static Header* add_heap(size_t req_size) {
 
 static Header* grow(size_t req_size) {
     Header *cp, *up;
-    printf("grow\n");
     // 增加新内存
     if (!(cp = add_heap(req_size))) {
         return NULL;
@@ -81,9 +63,7 @@ void* mini_gc_malloc(size_t req_size) {
         prevp = free_list = p;
     }
 
-
     for (p = prevp->next_free; ; prevp = p, p = p->next_free) {
-        printf("flag1 p:%p\t p->size:%zu\treq_size:%zu\n", p, p->size, req_size);
         if (p->size >= req_size) {
             if (p->size == req_size) {  // 需分配的内存数量和当前内存数量相等时，不分配内存
                 // just fit
@@ -92,11 +72,8 @@ void* mini_gc_malloc(size_t req_size) {
                 // to big
                 // 分配内存。内存从后面往前分配
                 p->size -= (req_size + HEADER_SIZE);
-                // printf("flag2 p:%p\tp->size:%zu\n", p, p->size);
                 p = NEXT_HEADER(p);
-                // printf("flag3 p:%p\n", p);
                 p->size = req_size;
-                // printf("p->size:%zu\t p:%p\t req_size:%d\n\n", p->size, p, req_size);
             }
             free_list = prevp;
             FL_SET(p, FL_ALLOC);    // 设置当前p地址的flag为FL_ALLOC(已分配)
@@ -104,10 +81,8 @@ void* mini_gc_malloc(size_t req_size) {
         }
 
         // 如果p等于free_list，内存从后往前分配内存，已经分配完所有内存
-        printf("p == free_list: %d\n", p == free_list);
         if (p == free_list) {
             if (!do_gc) {   // 执行GC操作
-                printf("gc\n");
                 garbage_collect();
                 do_gc = 1;
             } else if ((p = grow(req_size)) == NULL) {
@@ -125,12 +100,13 @@ void mini_gc_free(void *ptr) {
     // 搜索目标到free_list的连接点
     for (hit = free_list; !(target > hit && target < hit->next_free); hit = hit->next_free) {
         // heap end? And hit(search)
+        // 寻找ptr在free_list中的位置，然后进行下一步操作
         if (hit >= hit->next_free && (target > hit || target < hit->next_free)) {
             break;
         }
     }
 
-    // 为target增加size和next_free
+    // 如果target地址大于hit地址，为target增加size和next_free
     if (NEXT_HEADER(target) ==  hit->next_free) {
         // merge
         target->size += (hit->next_free->size + HEADER_SIZE);
@@ -140,7 +116,7 @@ void mini_gc_free(void *ptr) {
         target->next_free = hit->next_free;
     }
 
-    // 为hit增加size和next_free
+    // 如果hit地址大于target地址. 为hit增加size和next_free
     if (NEXT_HEADER(hit) == target) {
         // merge
         hit->size += (target->size + HEADER_SIZE);
@@ -151,24 +127,9 @@ void mini_gc_free(void *ptr) {
     }
 
     free_list = hit;
-    target->flags = 0;  // 初始化flags
+    // 初始化flags,重新然后内存可以再分配
+    target->flags = 0;
 }
-
-
-struct root_range {
-    void *start;
-    void *end;
-};
-
-#define IS_MARKED(x) (FL_TEST(x, FL_ALLOC) && FL_TEST(x, FL_MARK))
-#define ROOT_RANGES_LIMIT 1000
-
-
-static struct root_range root_ranges[ROOT_RANGES_LIMIT];
-static size_t root_ranges_used = 0;
-static void *stack_start = NULL;
-static void *stack_end = NULL;
-static GC_Heap *hit_cache = NULL;
 
 static GC_Heap* is_pointer_to_heap(void *ptr) {
     size_t i;
@@ -229,11 +190,10 @@ static void set_stack_end(void) {
     dummy = 42;
 
     stack_end = (void *)&dummy;
-    printf("stack_start: %p, stack_end:%p\n", stack_start, stack_end);
 }
 
-static void gc_mark_range(void *start, void *end);
 
+// 标记阶段
 static void gc_mark(void *ptr) {
     GC_Heap *gh;
     Header *hdr;
@@ -247,7 +207,7 @@ static void gc_mark(void *ptr) {
     // 检测是否被标记。如果被标记了，就返回
     if (FL_TEST(hdr, FL_MARK)) return;
 
-    // marking. 标记
+    // marking. 标记. FL_ALLOC | FL_MARK = 3
     FL_SET(hdr, FL_MARK);
     DEBUG(printf("mark ptr: %p, header: %p\n", ptr, hdr));
 
@@ -273,11 +233,11 @@ static void gc_mark_register(void) {
     for (i = 0; i < sizeof(env); i++) {
         gc_mark(((void **)env)[i]);
     }
-    printf("\n");
 }
 
 static void gc_mark_stack(void) {
     set_stack_end();
+    // 扫描stack
     if (stack_start > stack_end) {
         gc_mark_range(stack_end, stack_start);
     } else {
@@ -285,18 +245,24 @@ static void gc_mark_stack(void) {
     }
 }
 
+// 清除阶段
 static void gc_sweep(void) {
     size_t i;
     Header *p, *pend, *pnext;
 
+    // 遍历gc_heaps数组
     for (i = 0; i < gc_heaps_used; i++) {
         pend = (Header *)(((size_t)gc_heaps[i].slot) + gc_heaps[i].size);
         for (p = gc_heaps[i].slot; p < pend; p = NEXT_HEADER(p)) {
+            // 如果已经被分配内存
             if (FL_TEST(p, FL_ALLOC)) {
+                // 如果已经被标记
                 if (FL_TEST(p, FL_MARK)) {
                     DEBUG(printf("mark unset: %p\n", p));
+                    // 取消标记
                     FL_UNSET(p, FL_MARK);
                 } else {
+                    // 释放内存
                     mini_gc_free(p + 1);
                 }
             }
@@ -336,4 +302,63 @@ void garbage_collect(void) {
 
     // sweeping
     gc_sweep();
+}
+
+/* ========================================================================== */
+/*  test                                                                      */
+/* ========================================================================== */
+static void test_mini_gc_malloc_free() {
+    void *p1, *p2, *p3;
+
+    // malloc check
+    p1 = (void *)mini_gc_malloc(10);
+    p2 = (void *)mini_gc_malloc(10);
+    p3 = (void *)mini_gc_malloc(10);
+
+    assert(((Header*)p1 - 1)->size == ALIGN(10, PTRSIZE));
+    assert(((Header *)p1 - 1)->flags == FL_ALLOC);
+    assert((Header *)(((size_t)(free_list + 1)) + free_list->size) == ((Header*)p3 - 1));
+
+    // free check
+    mini_gc_free(p1);
+    mini_gc_free(p3);
+    mini_gc_free(p2);
+
+    assert(free_list->next_free == free_list);
+    assert((void *)gc_heaps[0].slot == (void *)free_list);
+    assert(gc_heaps[0].size == TINY_HEAP_SIZE);
+    assert(((Header *)p1 - 1)->flags == 0);
+
+    // grow check
+    p1 = mini_gc_malloc(TINY_HEAP_SIZE + 80);
+    assert(gc_heaps_used == 2);
+    assert(gc_heaps[1].size == (TINY_HEAP_SIZE + 80));
+    mini_gc_free(p1);
+}
+
+static void test_garbage_collect() {
+    void *p;
+    p = mini_gc_malloc(100);
+    assert(FL_TEST((((Header *)p)-1), FL_ALLOC));
+    p = 0;
+    garbage_collect();
+}
+
+static void test_garbage_collect_load_test() {
+    void *p;
+    int i;
+    for (i = 0; i < 2000; i++) {
+        p = mini_gc_malloc(100);
+    }
+
+    assert((((Header *)p)-1)->flags);
+    assert(stack_end != stack_start);
+}
+
+int main() {
+    gc_init();
+    test_mini_gc_malloc_free();
+    test_garbage_collect();
+    test_garbage_collect_load_test();
+    return 0;
 }
