@@ -83,4 +83,12 @@ void add_roots(void *start, void *end);
 void garbage_collect(void);
 
 
+/* roots */
+#define  ROOT_RANGES_LIMIT 100000
+#define  DEBUG(exp) exp
+extern   root roots[ROOT_RANGES_LIMIT];
+extern   size_t root_used;
+void     add_roots(void* o_ptr);       //模拟根，真正意义的根来自全局、栈、寄存器等、这里模拟用数组实现
+#endif
+
 #endif
