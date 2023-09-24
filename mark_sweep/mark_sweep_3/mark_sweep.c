@@ -1,114 +1,150 @@
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#include "mark_sweep.h"
 
-#define HEAP_SIZE 1024 // 内存池大小
-#define MARKED 0x01    // 标记位
+object *_roots[MAX_ROOTS];
 
-// 内存块结构体
-typedef struct Node Node;
-struct Node {
-    Node* next;
-    size_t size;
-    int mark;
-    char data[]; // 存放数据的数组
-};
+node *next_free;
+node *head;
+int _rp;
 
-// 内存池空间
-static char heap[HEAP_SIZE];
+int resolve_heap_size(int size);
 
-// 内存池的头结点
-static Node* heap_head;
+node* init_free_list(int free_list_size);
 
-// 分配内存
-void* allocate(size_t size) {
-    Node* p = heap_head, *pre = NULL;
-    void* result = NULL;
-    while (p != NULL) {
-        if (!p->mark && p->size >= size) {
-            p->mark = MARKED; // 标记为活跃
-            result = p->data;
-            break;
-        }
-        pre = p;
-        p = p->next;
+node *find_idle_node();
+
+void mark(object* obj);
+
+void gc();
+
+void sweep();
+
+int resolve_heap_size(int size) {
+    if (size > MAX_HEAP_SIZE) {
+        size = MAX_HEAP_SIZE;
     }
 
-    if (result == NULL) {
-        // 分配新内存块
-        p = (Node*)malloc(size + sizeof(Node));
-        p->next = NULL;
-        p->size = size;
-        p->mark = MARKED;
-
-        // 将新内存块加入内存池尾部
-        if (pre == NULL) {
-            heap_head = p;
-        } else {
-            pre->next = p;
-        }
+    if (size < NODE_SIZE) {
+        return NODE_SIZE;
     }
 
-    return result;
+    return size / NODE_SIZE * NODE_SIZE;
 }
 
-// 清除内存
-void collect() {
-    Node* p = heap_head, *pre = NULL, *temp = NULL;
-
-    // 标记阶段
-    while (p != NULL) {
-        if (p->mark) {
-            p->mark = 0; // 重置标记
-        }
-        pre = p;
-        p = p->next;
+node *init_free_list(int free_list_size) {
+    node *head = NULL;
+    for (int i = 0; i < free_list_size; ++i) {
+        node *_node = (node *) malloc(NODE_SIZE);
+        _node->next = head;
+        _node->size = NODE_SIZE;
+        _node->used = FALSE;
+        _node->data = NULL;
+        head = _node;
     }
 
-    // 清除阶段
-    p = heap_head;
-    while (p != NULL) {
-        if (!p->mark) {
-            if (pre == NULL) { // 删除第一个节点
-                heap_head = p->next;
-            } else {
-                pre->next = p->next;
-            }
-            temp = p->next;
-            free(p);
-            p = temp;
-        } else {
-            pre = p;
-            p = p->next;
-        }
+    return head;
+}
+
+node* find_idle_node() {
+    for (next_free = head; next_free && next_free->used; next_free = next_free->next) {}
+
+    // 还找不到就触发回收
+    if (!next_free) {
+        gc();
     }
 
-    // 合并阶段
-    p = heap_head;
-    while (p->next != NULL) {
-        if ((char*)p + sizeof(Node) + p->size == (char*)p->next) { // 可以合并
-            p->size += sizeof(Node) + p->next->size;
-            p->next = p->next->next;
-        } else {
-            p = p->next;
-        }
+    for (next_free = head->next; next_free && next_free->used; next_free = next_free->next) {}
+
+    //再找不到真的没了……
+    if (!next_free) {
+        printf("Allocation Failed!OutOfMemory...\n");
+        abort();
     }
 }
 
+void gc_init(int size) {
+    int heap_size = resolve_heap_size(size);
+    int free_list_size = heap_size / NODE_SIZE;
+    head = init_free_list(free_list_size);
 
-int main() {
-    int* p1 = (int*)allocate(sizeof(int));
-    int* p2 = (int*)allocate(sizeof(int));
-    int* p3 = (int*)allocate(sizeof(int));
+    _rp = 0;
+    next_free = head;
+}
 
-    *p1 = 1;
-    *p2 = 2;
-    *p3 = 3;
+object* gc_alloc(class_descriptor* clss) {
+    if (!next_free || next_free->used) {
+       find_idle_node(); 
+    }
 
-    collect();
+    // 赋值当前的freePoint
+    node* _node = next_free;
 
-    int* p4 = (int*)allocate(sizeof(int));
-    *p4 = 4;
+    // 新分配的对象指针
+    // 将新对象分配在free_list的节点数据之后，node单元的空间内除了sizeof(node)，剩下的地址空间都用于存储对象
+    object *new_obj = (void *) _node + sizeof(node);
+    new_obj->clss = clss;
+    new_obj->marked = FALSE;
 
-    printf("%d %d %d %d\n", *p1, *p2, *p3, *p4);
-    return 0;
+    _node->used = TRUE;
+    _node->data = new_obj;
+    _node->size = clss->size;
+
+    for (int i = 0; i < new_obj->clss->num_fields; ++i) {
+        //*(data **)是一个dereference操作，拿到field的pointer
+        //(void *)o是强转为void* pointer，void*进行加法运算的时候就不会按类型增加地址
+        *(object **) ((void *) new_obj + new_obj->clss->field_offsets[i]) = NULL;
+    }
+
+    next_free = next_free->next;
+
+    return new_obj;
+}
+
+void mark(object* obj) {
+    if (!obj || obj->marked) { return; }
+
+    obj->marked = TRUE;
+    printf("marking...\n");
+
+    //递归标记对象的引用
+    for (int i = 0; i < obj->clss->num_fields; ++i) {
+        mark(*((object **) ((void *) obj + obj->clss->field_offsets[i])));
+    }
+}
+
+void sweep() {
+    for (node* _cur = head; _cur && _cur; _cur = _cur->next) {
+        if (!_cur->used) continue;
+        object *obj = _cur->data;
+        if (obj->marked) {
+            obj->marked = FALSE;
+        } else {
+            //回收对象所属的node
+            memset(obj, 0, obj->clss->size);
+
+            //通过地址计算出，对象所在的node
+            node *_node = (node *) ((void *) obj - sizeof(node));
+            _node->used = FALSE;
+            _node->data = NULL;
+            _node->size = 0;
+
+            //将next_free更新为当前回收的node
+            next_free = _node;
+            printf("collection ...\n");
+        }
+    }
+}
+
+void gc() {
+    for (int i = 0; i < _rp; ++i) {
+        mark(_roots[i]);
+    }
+    sweep();
+}
+
+int gc_num_roots() {
+    return _rp;
 }
