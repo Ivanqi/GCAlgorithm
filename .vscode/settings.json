@@ -1,5 +1,10 @@
 {
     "files.associations": {
-        "gc.h": "c"
+        "*.vue": "html",
+        "*.s": "arm",
+        "*.yaml": "yaml",
+        "*.ld": "mapfile",
+        "gc.h": "c",
+        "reference_counting.h": "c"
     }
 }
