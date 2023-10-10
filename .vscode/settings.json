@@ -5,6 +5,8 @@
         "*.yaml": "yaml",
         "*.ld": "mapfile",
         "gc.h": "c",
-        "reference_counting.h": "c"
-    }
+        "reference_counting.h": "c",
+        "cstring": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }
